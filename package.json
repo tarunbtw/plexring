@@ -22,7 +22,9 @@
     "test": "node --import tsx/esm --test 'test/**/*.test.ts'",
     "bench": "node --import tsx/esm bench/vs-piscina.ts",
     "bench:http": "node --import tsx/esm bench/http-benchmark.ts",
-    "server": "node --import tsx/esm bench/http-server.ts"
+    "bench:realworld": "node --import tsx/esm bench/realworld/run-benchmark.ts",
+    "server": "node --import tsx/esm bench/http-server.ts",
+    "server:realworld": "node --import tsx/esm bench/realworld/server.ts"
   },
   "engines": {
     "node": ">=20.0.0"

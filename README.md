@@ -143,27 +143,31 @@ Methods:
 
 ---
 
-## Real-World HTTP Load Testing & k6 Simulation
+## Real-World Production Microservice Benchmark (Database + Crypto Auth)
 
-PlexRing includes a production-grade HTTP Auth Microservice benchmark simulating real-world API gateway token verification.
+A full production-grade backend service simulating an API Gateway with:
+- **10,000 indexed users pre-seeded in memory**
+- **Database queries + session storage**
+- **Offloaded cryptographic HMAC-SHA256 signature verification**
+- **Carefully tuned for 2-vCPU / 2GB RAM Cloud instances**
 
-### Option A: Automated All-in-One Benchmark
-Runs an automated keep-alive HTTP benchmark with 50 concurrent virtual users comparing PlexRing vs Piscina:
+### 1. Automated Benchmark (Zero Dependencies)
+Runs 30 concurrent keep-alive HTTP clients sending real JSON POST requests:
 
 ```bash
-npm run bench:http
+npm run bench:realworld
 ```
 
-### Option B: Running the Standalone Server & k6
+### 2. Full k6 Load Simulation
 
-1. Start the HTTP server on port 3000:
+1. Start the production microservice:
 ```bash
-npm run server
+npm run server:realworld
 ```
 
-2. Run the included k6 load test suite:
+2. Run the realistic k6 scenario:
 ```bash
-k6 run bench/k6-test.js
+k6 run bench/realworld/k6-load.js
 ```
 
 ---
