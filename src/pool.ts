@@ -12,7 +12,14 @@ import {
   MSG_FALLBACK_JOB,
   MSG_FALLBACK_RES,
 } from './constants.js';
-import { decodePayload } from './codec.js';
+import {
+  decodePayload,
+  BUF_TRUE,
+  BUF_FALSE,
+  BUF_VOID,
+  TAG_BOOLEAN,
+  TAG_VOID,
+} from './codec.js';
 import type {
   PlexOptions,
   PoolStats,
@@ -153,8 +160,15 @@ export class PlexRing {
         }
 
         if (status === STATUS_OK) {
-          // Fast copy payloadView before releasing slot in resultRing
-          resolve?.(new Uint8Array(payloadView));
+          // Zero-allocation singleton fast-path for boolean and void responses
+          const len = payloadView.byteLength;
+          if (len === 2 && payloadView[0] === TAG_BOOLEAN) {
+            resolve?.(payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
+          } else if (len === 1 && payloadView[0] === TAG_VOID) {
+            resolve?.(BUF_VOID);
+          } else {
+            resolve?.(new Uint8Array(payloadView));
+          }
         } else {
           const decoded = decodePayload(payloadView);
           const err = decoded instanceof Error ? decoded : new Error(String(decoded));
@@ -187,11 +201,14 @@ export class PlexRing {
     let bestWorker = this.workers[0];
     let minPending = bestWorker.submitRing.getPendingCount();
 
-    for (let i = 1; i < this.workerCount; i++) {
-      const pending = this.workers[i].submitRing.getPendingCount();
-      if (pending < minPending) {
-        minPending = pending;
-        bestWorker = this.workers[i];
+    if (minPending > 0) {
+      for (let i = 1; i < this.workerCount; i++) {
+        const pending = this.workers[i].submitRing.getPendingCount();
+        if (pending < minPending) {
+          minPending = pending;
+          bestWorker = this.workers[i];
+          if (minPending === 0) break;
+        }
       }
     }
 

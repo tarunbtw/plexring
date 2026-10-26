@@ -1,7 +1,15 @@
 import { isMainThread } from 'node:worker_threads';
 import { PlexRing } from './pool.js';
 import { startWorkerLoop } from './worker-loop.js';
-import { encodePayload, decodePayload, TAG_RAW_BYTES, TAG_JSON } from './codec.js';
+import {
+  encodePayload,
+  decodePayload,
+  TAG_RAW_BYTES,
+  TAG_JSON,
+  BUF_TRUE,
+  BUF_FALSE,
+  BUF_VOID,
+} from './codec.js';
 import { MAX_PAYLOAD } from './constants.js';
 import type {
   PlexOptions,
@@ -39,12 +47,16 @@ export function defineWorker<T extends Record<string, TypedJobHandler<any, any>>
   // If running inside worker thread, start the SPSC spin-park execution loop automatically
   if (!isMainThread) {
     const rawHandlers: Record<number, RawJobHandler> = {};
+    const workerScratchBuf = new Uint8Array(MAX_PAYLOAD);
 
     function serializeResult(result: unknown, key: string): Uint8Array {
-      const outBuf = new Uint8Array(MAX_PAYLOAD);
-      const len = encodePayload(result, outBuf);
+      if (result === true) return BUF_TRUE;
+      if (result === false) return BUF_FALSE;
+      if (result === undefined || result === null) return BUF_VOID;
+
+      const len = encodePayload(result, workerScratchBuf);
       if (len !== -1) {
-        return outBuf.subarray(0, len);
+        return workerScratchBuf.subarray(0, len);
       }
 
       // Oversized result handling (triggers fallback postMessage return in worker-loop)
@@ -141,24 +153,30 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
       }
 
       let payloadBytes: Uint8Array;
-      const outBuf = new Uint8Array(MAX_PAYLOAD);
-      const len = encodePayload(input, outBuf);
-
-      if (len !== -1) {
-        payloadBytes = outBuf.subarray(0, len);
+      if (input === true) {
+        payloadBytes = BUF_TRUE;
+      } else if (input === false) {
+        payloadBytes = BUF_FALSE;
+      } else if (input === undefined || input === null) {
+        payloadBytes = BUF_VOID;
       } else {
-        // Oversized input: serialize with tag byte for fallback postMessage path
-        if ((input as unknown) instanceof Uint8Array) {
-          const bigBuf = new Uint8Array((input as unknown as Uint8Array).byteLength + 1);
-          bigBuf[0] = TAG_RAW_BYTES;
-          bigBuf.set(input as unknown as Uint8Array, 1);
-          payloadBytes = bigBuf;
+        const len = encodePayload(input, scratchBuf);
+        if (len !== -1) {
+          payloadBytes = scratchBuf.subarray(0, len);
         } else {
-          const jsonBytes = new TextEncoder().encode(JSON.stringify(input));
-          const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
-          bigBuf[0] = TAG_JSON;
-          bigBuf.set(jsonBytes, 1);
-          payloadBytes = bigBuf;
+          // Oversized input: serialize with tag byte for fallback postMessage path
+          if ((input as unknown) instanceof Uint8Array) {
+            const bigBuf = new Uint8Array((input as unknown as Uint8Array).byteLength + 1);
+            bigBuf[0] = TAG_RAW_BYTES;
+            bigBuf.set(input as unknown as Uint8Array, 1);
+            payloadBytes = bigBuf;
+          } else {
+            const jsonBytes = new TextEncoder().encode(JSON.stringify(input));
+            const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
+            bigBuf[0] = TAG_JSON;
+            bigBuf.set(jsonBytes, 1);
+            payloadBytes = bigBuf;
+          }
         }
       }
 

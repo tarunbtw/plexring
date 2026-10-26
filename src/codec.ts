@@ -9,6 +9,11 @@ export const TAG_INT32 = 0x05;
 export const TAG_JSON = 0x06;
 export const TAG_ERROR = 0xff;
 
+// Pre-allocated immutable singletons for zero-allocation fast paths
+export const BUF_TRUE = new Uint8Array([TAG_BOOLEAN, 1]);
+export const BUF_FALSE = new Uint8Array([TAG_BOOLEAN, 0]);
+export const BUF_VOID = new Uint8Array([TAG_VOID]);
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -118,10 +123,8 @@ export function decodePayload(buffer: Uint8Array): unknown {
       return data;
     case TAG_BOOLEAN:
       return data[0] === 1;
-    case TAG_INT32: {
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      return view.getInt32(0, true);
-    }
+    case TAG_INT32:
+      return data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
     case TAG_FLOAT64: {
       const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
       return view.getFloat64(0, true);
