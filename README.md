@@ -22,13 +22,24 @@ Every job dispatch and result return via `postMessage` triggers V8 HTML5 Structu
 
 ## Performance: Head-to-Head vs. Piscina
 
-Tested natively on Apple Silicon (Node.js v26, 4 Worker Threads):
+Tested on 10 Worker Threads (`node --import tsx/esm bench/vs-piscina.ts`):
 
-| Benchmark Workload | Piscina Throughput | **PlexRing Throughput** | Speedup | Latency (med) |
+### 1. Sequential Round-Trip Latency (Concurrency = 1)
+| Workload | Piscina Throughput | **PlexRing Throughput** | Speedup | Latency (med) |
 | :--- | :--- | :--- | :--- | :--- |
-| **64-Byte Pure IPC Echo** *(0µs work, isolates IPC tax)* | 83,876 ops/s | **285,714 ops/s** | **3.4x faster** | **3.5 µs** vs 11.8 µs |
-| **128-Byte SHA-256 Micro-Hash** *(~5µs CPU work)* | 95,024 ops/s | **192,272 ops/s** | **2.0x faster** | **5.2 µs** vs 10.6 µs |
-| **Auth Verification Simulation** *(~15µs CPU work)* | 84,534 ops/s | **272,702 ops/s** | **3.2x faster** | **3.6 µs** vs 11.8 µs |
+| **64-Byte Pure IPC Echo** *(0µs work, isolates IPC tax)* | 70,947 ops/s | **240,112 ops/s** | **3.4x faster** | **3.8 µs** vs 13.7 µs |
+| **128-Byte SHA-256 Micro-Hash** *(~5µs CPU work)* | 79,247 ops/s | **182,970 ops/s** | **2.3x faster** | **5.2 µs** vs 11.8 µs |
+| **Auth Verification Simulation** *(~15µs CPU work)* | 71,855 ops/s | **234,073 ops/s** | **3.3x faster** | **3.9 µs** vs 13.4 µs |
+
+### 2. Pipelined High-Concurrency Throughput (Multi-Core Saturation)
+*Simulates real-world server traffic (HTTP/gRPC/WebSocket) with pipelined in-flight tasks:*
+
+| Workload | Piscina Throughput | **PlexRing Throughput** | Speedup |
+| :--- | :--- | :--- | :--- |
+| **64-Byte Echo (Concurrency = 16)** | 101,070 ops/s | **1,051,208 ops/s** | **10.4x faster** |
+| **64-Byte Echo (Concurrency = 64)** | 110,800 ops/s | **1,002,745 ops/s** | **9.1x faster** |
+| **128-Byte SHA-256 (Concurrency = 16)** | 106,664 ops/s | **1,018,866 ops/s** | **9.6x faster** |
+| **200-Byte AuthCheck (Concurrency = 16)** | 102,215 ops/s | **1,208,715 ops/s** | **11.8x faster** |
 
 ---
 
