@@ -20,6 +20,7 @@ const textDecoder = new TextDecoder();
 // Reusable scratch buffer for packing structured primitives without heap allocations
 const scratchBuf = new Uint8Array(MAX_PAYLOAD);
 const scratchView = new DataView(scratchBuf.buffer, scratchBuf.byteOffset, scratchBuf.byteLength);
+const scratchPayloadSlice = scratchBuf.subarray(1, MAX_PAYLOAD);
 
 /**
  * Encodes an arbitrary JS value into a target buffer slice.
@@ -77,7 +78,9 @@ export function encodePayload(
   // 4. UTF-8 String (TextEncoder.encodeInto directly into target buffer, zero allocations)
   if (typeof value === 'string') {
     target[targetOffset] = TAG_UTF8_STRING;
-    const destSlice = target.subarray(targetOffset + 1, targetOffset + MAX_PAYLOAD);
+    const destSlice = (target === scratchBuf && targetOffset === 0)
+      ? scratchPayloadSlice
+      : target.subarray(targetOffset + 1, targetOffset + MAX_PAYLOAD);
     const result = textEncoder.encodeInto(value, destSlice);
     // If string did not fully fit within MAX_PAYLOAD - 1
     if (result.read !== value.length) {
@@ -91,7 +94,9 @@ export function encodePayload(
     try {
       const jsonStr = JSON.stringify(value);
       target[targetOffset] = TAG_JSON;
-      const destSlice = target.subarray(targetOffset + 1, targetOffset + MAX_PAYLOAD);
+      const destSlice = (target === scratchBuf && targetOffset === 0)
+        ? scratchPayloadSlice
+        : target.subarray(targetOffset + 1, targetOffset + MAX_PAYLOAD);
       const result = textEncoder.encodeInto(jsonStr, destSlice);
       if (result.read !== jsonStr.length) {
         return -1;
@@ -109,34 +114,34 @@ export function encodePayload(
  * Decodes payload bytes from a slot into their original JS value.
  */
 export function decodePayload(buffer: Uint8Array): unknown {
-  if (buffer.byteLength === 0) {
+  const len = buffer.byteLength;
+  if (len === 0) {
     return undefined;
   }
 
   const tag = buffer[0];
-  const data = buffer.subarray(1);
 
   switch (tag) {
     case TAG_VOID:
       return undefined;
-    case TAG_RAW_BYTES:
-      return data;
     case TAG_BOOLEAN:
-      return data[0] === 1;
+      return buffer[1] === 1;
     case TAG_INT32:
-      return data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+      return buffer[1] | (buffer[2] << 8) | (buffer[3] << 16) | (buffer[4] << 24);
     case TAG_FLOAT64: {
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const view = new DataView(buffer.buffer, buffer.byteOffset + 1, len - 1);
       return view.getFloat64(0, true);
     }
+    case TAG_RAW_BYTES:
+      return buffer.subarray(1);
     case TAG_UTF8_STRING:
-      return textDecoder.decode(data);
+      return textDecoder.decode(buffer.subarray(1));
     case TAG_JSON:
-      return JSON.parse(textDecoder.decode(data));
+      return JSON.parse(textDecoder.decode(buffer.subarray(1)));
     case TAG_ERROR:
-      return new Error(textDecoder.decode(data));
+      return new Error(textDecoder.decode(buffer.subarray(1)));
     default:
-      return data;
+      return buffer.subarray(1);
   }
 }
 

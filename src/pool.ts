@@ -51,6 +51,7 @@ export class PlexRing {
   private readonly pendingRejecters: (((err: Error) => void) | undefined)[] = new Array(TABLE_SIZE);
 
   private nextRequestId = 1;
+  private lastActiveWorkerIdx = 0;
   private isDestroyed = false;
 
   constructor(options: PlexOptions) {
@@ -121,7 +122,16 @@ export class PlexRing {
       this.drainResults(ctx);
 
       // 3. Double-check if worker pushed more results while draining
-      if (ctx.resultRing.getPendingCount() > 0) {
+      if (ctx.resultRing.getConsumerPendingCount() > 0) {
+        continue;
+      }
+
+      // Mark that Main Thread is arming waitAsync
+      Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 1);
+
+      // Double check after setting flag to avoid race
+      if (ctx.resultRing.getConsumerPendingCount() > 0) {
+        Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         continue;
       }
 
@@ -130,10 +140,12 @@ export class PlexRing {
       const waitRes = Atomics.waitAsync(ctx.resultRing.ctrl, WRITE_IDX, expectedWrite);
       if (waitRes.async) {
         waitRes.value.then(() => {
+          Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
           this.armWaitAsync(ctx);
         });
         return;
       } else {
+        Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         if (waitRes.value === 'not-equal') {
           continue;
         }
@@ -197,20 +209,28 @@ export class PlexRing {
       this.pendingRejecters[slot] = reject;
     });
 
-    // Select worker with lowest pending queue depth in O(1)
-    let bestWorker = this.workers[0];
-    let minPending = bestWorker.submitRing.getPendingCount();
+    // Warm-affinity spillover scheduler:
+    // If last active worker has 0 pending jobs, it is warm and spinning in user space!
+    // Reusing it avoids kernel futex wakeup on sequential streams.
+    let bestWorker = this.workers[this.lastActiveWorkerIdx];
+    let minPending = bestWorker.submitRing.getProducerPendingCount();
 
     if (minPending > 0) {
-      for (let i = 1; i < this.workerCount; i++) {
-        const pending = this.workers[i].submitRing.getPendingCount();
+      // Last active worker has a queue! Spill over to next available worker in round-robin order
+      const start = (this.lastActiveWorkerIdx + 1) % this.workerCount;
+      for (let i = 0; i < this.workerCount; i++) {
+        const idx = (start + i) % this.workerCount;
+        const candidate = this.workers[idx];
+        const pending = candidate.submitRing.getProducerPendingCount();
         if (pending < minPending) {
           minPending = pending;
-          bestWorker = this.workers[i];
+          bestWorker = candidate;
+          this.lastActiveWorkerIdx = idx;
           if (minPending === 0) break;
         }
       }
     }
+
 
     // Opportunistically drain any ready results from the selected worker
     this.drainResults(bestWorker);
@@ -229,6 +249,7 @@ export class PlexRing {
       requestId: reqId,
       payload,
     });
+
 
     // Poke sleeping worker so futex wakes up immediately to process parentPort message
     if (bestWorker.submitRing.isConsumerSleeping()) {

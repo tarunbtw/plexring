@@ -140,16 +140,18 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
 
   // Derive deterministic key mapping (alphabetical sort)
   const keys = Array.isArray(spec) ? [...spec].sort() : spec.keys;
-  const keyMap = new Map<string, number>();
-  keys.forEach((key, idx) => keyMap.set(key, idx));
+  const keyLookup: Record<string, number> = Object.create(null);
+  keys.forEach((key, idx) => {
+    keyLookup[key] = idx;
+  });
 
-  const scratchBuf = new Uint8Array(249);
+  const scratchBuf = new Uint8Array(MAX_PAYLOAD);
 
   return {
-    async run<K extends keyof T>(task: K, input: Parameters<T[K]>[0]): Promise<Awaited<ReturnType<T[K]>>> {
-      const jobType = keyMap.get(task as string);
+    run<K extends keyof T>(task: K, input: Parameters<T[K]>[0]): Promise<Awaited<ReturnType<T[K]>>> {
+      const jobType = keyLookup[task as string];
       if (jobType === undefined) {
-        throw new Error(`Unknown task name: "${String(task)}"`);
+        return Promise.reject(new Error(`Unknown task name: "${String(task)}"`));
       }
 
       let payloadBytes: Uint8Array;
@@ -180,8 +182,7 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
         }
       }
 
-      const resBytes = await pool.run(jobType, payloadBytes);
-      return decodePayload(resBytes) as Awaited<ReturnType<T[K]>>;
+      return pool.run(jobType, payloadBytes).then(decodePayload) as Promise<Awaited<ReturnType<T[K]>>>;
     },
 
     runRaw(jobType: number, payload: Uint8Array): Promise<Uint8Array> {

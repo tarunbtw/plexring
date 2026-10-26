@@ -147,7 +147,7 @@ export function startWorkerLoop(handlers: Record<number, RawJobHandler>): void {
       // Stage 2: Adaptive user-space spin (avoids ~10µs kernel futex entry on microsecond gaps)
       let foundJob = false;
       for (let i = 0; i < SPIN_LIMIT; i++) {
-        if (submitRing.getPendingCount() > 0) {
+        if (submitRing.hasPendingJobs()) {
           foundJob = true;
           break;
         }
@@ -161,14 +161,14 @@ export function startWorkerLoop(handlers: Record<number, RawJobHandler>): void {
       // 1. Snapshot expected write index BEFORE checking pending count
       const expectedWrite = Atomics.load(submitRing.ctrl, WRITE_IDX);
 
-      if (submitRing.getPendingCount() > 0) {
+      if (submitRing.hasPendingJobs()) {
         continue;
       }
 
       Atomics.store(submitRing.ctrl, SLEEP_FLAG, 1);
 
       // Double-check: Did producer enqueue any jobs before/during SLEEP_FLAG store?
-      if (submitRing.getPendingCount() > 0) {
+      if (submitRing.hasPendingJobs()) {
         Atomics.store(submitRing.ctrl, SLEEP_FLAG, 0);
         continue;
       }

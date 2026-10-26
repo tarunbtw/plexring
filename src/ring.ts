@@ -104,13 +104,11 @@ export class SpscRing {
     this.localWriteIdx = nextWrite;
     Atomics.store(this.ctrl, WRITE_IDX, nextWrite);
 
-    // 3. Reset sleep flag if consumer was marked sleeping
+    // 3. Wake consumer ONLY if marked sleeping in kernel futex or waitAsync
     if (Atomics.load(this.ctrl, SLEEP_FLAG) === 1) {
       Atomics.store(this.ctrl, SLEEP_FLAG, 0);
+      Atomics.notify(this.ctrl, WRITE_IDX, 1);
     }
-
-    // 4. Wake up consumer if waiting (wakes Atomics.waitAsync microtask or Atomics.wait futex)
-    Atomics.notify(this.ctrl, WRITE_IDX, 1);
 
     return true;
   }
@@ -154,10 +152,31 @@ export class SpscRing {
   }
 
   /**
-   * O(1) Queue Depth check for Main Thread load balancing.
+   * O(1) Queue Depth check for generic callers.
    */
   public getPendingCount(): number {
     return (Atomics.load(this.ctrl, WRITE_IDX) - Atomics.load(this.ctrl, READ_IDX)) | 0;
+  }
+
+  /**
+   * Fast queue depth check for Producer (uses localWriteIdx without redundant atomic load).
+   */
+  public getProducerPendingCount(): number {
+    return (this.localWriteIdx - Atomics.load(this.ctrl, READ_IDX)) | 0;
+  }
+
+  /**
+   * Fast queue depth check for Consumer (uses localReadIdx without redundant atomic load).
+   */
+  public getConsumerPendingCount(): number {
+    return (Atomics.load(this.ctrl, WRITE_IDX) - this.localReadIdx) | 0;
+  }
+
+  /**
+   * Ultra-fast O(1) check if consumer has any pending jobs (single atomic comparison).
+   */
+  public hasPendingJobs(): boolean {
+    return Atomics.load(this.ctrl, WRITE_IDX) !== this.localReadIdx;
   }
 
   /**
@@ -167,3 +186,4 @@ export class SpscRing {
     return Atomics.load(this.ctrl, SLEEP_FLAG) === 1;
   }
 }
+
