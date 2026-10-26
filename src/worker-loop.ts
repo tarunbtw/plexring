@@ -158,15 +158,15 @@ export function startWorkerLoop(handlers: Record<number, RawJobHandler>): void {
       }
 
       // Stage 3: Double-checked futex sleep
-      const currentWrite = Atomics.load(submitRing.ctrl, WRITE_IDX);
       Atomics.store(submitRing.ctrl, SLEEP_FLAG, 1);
 
-      // Lost-wakeup check: Did producer enqueue right as we prepared to sleep?
-      if (Atomics.load(submitRing.ctrl, WRITE_IDX) !== currentWrite) {
+      // Double-check: Did producer enqueue any jobs before/during SLEEP_FLAG store?
+      if (submitRing.getPendingCount() > 0) {
         Atomics.store(submitRing.ctrl, SLEEP_FLAG, 0);
         continue;
       }
 
+      const currentWrite = Atomics.load(submitRing.ctrl, WRITE_IDX);
       // Park thread in kernel until Main Thread calls Atomics.notify()
       // Periodic 50ms timeout ensures event loop runs for fallback jobs & shutdown signals
       const waitRes = Atomics.wait(submitRing.ctrl, WRITE_IDX, currentWrite, FUTEX_TIMEOUT_MS);

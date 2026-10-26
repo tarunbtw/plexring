@@ -40,33 +40,41 @@ export function defineWorker<T extends Record<string, TypedJobHandler<any, any>>
   if (!isMainThread) {
     const rawHandlers: Record<number, RawJobHandler> = {};
 
+    function serializeResult(result: unknown, key: string): Uint8Array {
+      const outBuf = new Uint8Array(MAX_PAYLOAD);
+      const len = encodePayload(result, outBuf);
+      if (len !== -1) {
+        return outBuf.subarray(0, len);
+      }
+
+      // Oversized result handling (triggers fallback postMessage return in worker-loop)
+      if (result instanceof Uint8Array) {
+        const bigBuf = new Uint8Array(result.byteLength + 1);
+        bigBuf[0] = TAG_RAW_BYTES;
+        bigBuf.set(result, 1);
+        return bigBuf;
+      }
+
+      const jsonBytes = new TextEncoder().encode(JSON.stringify(result));
+      const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
+      bigBuf[0] = TAG_JSON;
+      bigBuf.set(jsonBytes, 1);
+      return bigBuf;
+    }
+
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
       const fn = handlers[key];
 
-      rawHandlers[i] = async (payloadView: Uint8Array): Promise<Uint8Array> => {
+      rawHandlers[i] = (payloadView: Uint8Array): Uint8Array | Promise<Uint8Array> => {
         const decodedInput = decodePayload(payloadView);
-        const result = await fn(decodedInput);
+        const result = fn(decodedInput);
 
-        const outBuf = new Uint8Array(MAX_PAYLOAD);
-        const len = encodePayload(result, outBuf);
-        if (len !== -1) {
-          return outBuf.subarray(0, len);
+        if (result instanceof Promise) {
+          return result.then((res) => serializeResult(res, key));
         }
 
-        // Oversized result handling (triggers fallback postMessage return in worker-loop)
-        if (result instanceof Uint8Array) {
-          const bigBuf = new Uint8Array(result.byteLength + 1);
-          bigBuf[0] = TAG_RAW_BYTES;
-          bigBuf.set(result, 1);
-          return bigBuf;
-        }
-
-        const jsonBytes = new TextEncoder().encode(JSON.stringify(result));
-        const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
-        bigBuf[0] = TAG_JSON;
-        bigBuf.set(jsonBytes, 1);
-        return bigBuf;
+        return serializeResult(result, key);
       };
     }
 

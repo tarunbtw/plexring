@@ -109,14 +109,15 @@ export class PlexRing {
     while (!this.isDestroyed) {
       this.drainResults(ctx);
 
-      const currentWrite = Atomics.load(ctx.resultRing.ctrl, WRITE_IDX);
       Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 1);
 
-      // Lost-notification check: did worker push a result right before sleep flag was set?
-      if (Atomics.load(ctx.resultRing.ctrl, WRITE_IDX) !== currentWrite) {
+      // Lost-notification check: did worker push a result before/during SLEEP_FLAG store?
+      if (ctx.resultRing.getPendingCount() > 0) {
         Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         continue;
       }
+
+      const currentWrite = Atomics.load(ctx.resultRing.ctrl, WRITE_IDX);
 
       const waitRes = Atomics.waitAsync(ctx.resultRing.ctrl, WRITE_IDX, currentWrite);
       if (waitRes.async) {
