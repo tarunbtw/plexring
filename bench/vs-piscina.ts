@@ -128,7 +128,7 @@ async function runBenchmarks() {
 
   // Workload 4: Concurrent Pipelined Throughput (Multi-Core Saturation)
   console.log('\n>>> Part 2: Pipelined High-Concurrency Throughput (Multi-Core Saturation)');
-  console.log('Simulates real-world HTTP/gRPC server load with concurrent in-flight requests.');
+  console.log('Simulates real-world HTTP/gRPC server load with concurrent in-flight requests.\n');
 
   const concurrentResults: {
     Workload: string;
@@ -138,49 +138,62 @@ async function runBenchmarks() {
   }[] = [];
 
   // Pipelined Echo: Concurrency = 16
-  const echo16Total = 30000;
+  process.stdout.write('  [1/4] Running 64B Echo (Concurrency = 16)... ');
+  const echo16Total = 20000;
   const echo16Plex = await benchSlidingWindow(() => plex.run('echo', echoPayload), 16, echo16Total);
   const echo16Piscina = await benchSlidingWindow(() => piscina.run({ task: 'echo', payload: echoPayload }), 16, echo16Total);
+  const echo16Speedup = (echo16Plex / echo16Piscina).toFixed(2) + 'x';
+  console.log(`done! Plex: ${echo16Plex.toLocaleString()} ops/s | Piscina: ${echo16Piscina.toLocaleString()} ops/s (${echo16Speedup})`);
   concurrentResults.push({
     Workload: '64B Echo (Concurrency = 16)',
     'PlexRing (ops/s)': echo16Plex.toLocaleString(),
     'Piscina (ops/s)': echo16Piscina.toLocaleString(),
-    Speedup: (echo16Plex / echo16Piscina).toFixed(2) + 'x',
+    Speedup: echo16Speedup,
   });
 
   // Pipelined Echo: Concurrency = 64
-  const echo64Total = 60000;
+  process.stdout.write('  [2/4] Running 64B Echo (Concurrency = 64)... ');
+  const echo64Total = 25000;
   const echo64Plex = await benchSlidingWindow(() => plex.run('echo', echoPayload), 64, echo64Total);
   const echo64Piscina = await benchSlidingWindow(() => piscina.run({ task: 'echo', payload: echoPayload }), 64, echo64Total);
+  const echo64Speedup = (echo64Plex / echo64Piscina).toFixed(2) + 'x';
+  console.log(`done! Plex: ${echo64Plex.toLocaleString()} ops/s | Piscina: ${echo64Piscina.toLocaleString()} ops/s (${echo64Speedup})`);
   concurrentResults.push({
     Workload: '64B Echo (Concurrency = 64)',
     'PlexRing (ops/s)': echo64Plex.toLocaleString(),
     'Piscina (ops/s)': echo64Piscina.toLocaleString(),
-    Speedup: (echo64Plex / echo64Piscina).toFixed(2) + 'x',
+    Speedup: echo64Speedup,
   });
 
   // Pipelined Hash: Concurrency = 16
-  const hash16Total = 20000;
+  process.stdout.write('  [3/4] Running 128B SHA-256 (Concurrency = 16)... ');
+  const hash16Total = 15000;
   const hash16Plex = await benchSlidingWindow(() => plex.run('hash', hashPayload), 16, hash16Total);
   const hash16Piscina = await benchSlidingWindow(() => piscina.run({ task: 'hash', payload: hashPayload }), 16, hash16Total);
+  const hash16Speedup = (hash16Plex / hash16Piscina).toFixed(2) + 'x';
+  console.log(`done! Plex: ${hash16Plex.toLocaleString()} ops/s | Piscina: ${hash16Piscina.toLocaleString()} ops/s (${hash16Speedup})`);
   concurrentResults.push({
     Workload: '128B SHA-256 (Concurrency = 16)',
     'PlexRing (ops/s)': hash16Plex.toLocaleString(),
     'Piscina (ops/s)': hash16Piscina.toLocaleString(),
-    Speedup: (hash16Plex / hash16Piscina).toFixed(2) + 'x',
+    Speedup: hash16Speedup,
   });
 
   // Pipelined Auth: Concurrency = 16
-  const auth16Total = 20000;
+  process.stdout.write('  [4/4] Running 200B AuthCheck (Concurrency = 16)... ');
+  const auth16Total = 15000;
   const auth16Plex = await benchSlidingWindow(() => plex.run('authCheck', authPayload), 16, auth16Total);
   const auth16Piscina = await benchSlidingWindow(() => piscina.run({ task: 'authCheck', payload: authPayload }), 16, auth16Total);
+  const auth16Speedup = (auth16Plex / auth16Piscina).toFixed(2) + 'x';
+  console.log(`done! Plex: ${auth16Plex.toLocaleString()} ops/s | Piscina: ${auth16Piscina.toLocaleString()} ops/s (${auth16Speedup})`);
   concurrentResults.push({
     Workload: '200B AuthCheck (Concurrency = 16)',
     'PlexRing (ops/s)': auth16Plex.toLocaleString(),
     'Piscina (ops/s)': auth16Piscina.toLocaleString(),
-    Speedup: (auth16Plex / auth16Piscina).toFixed(2) + 'x',
+    Speedup: auth16Speedup,
   });
 
+  console.log('\n--- Consolidated Concurrency Benchmark Summary ---');
   console.table(concurrentResults);
 
   // Teardown

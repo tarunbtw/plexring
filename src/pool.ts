@@ -107,27 +107,26 @@ export class PlexRing {
    */
   private armWaitAsync(ctx: WorkerContext): void {
     while (!this.isDestroyed) {
+      // 1. Snapshot write index BEFORE draining
+      const expectedWrite = Atomics.load(ctx.resultRing.ctrl, WRITE_IDX);
+
+      // 2. Drain all completed results accumulated so far
       this.drainResults(ctx);
 
-      Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 1);
-
-      // Lost-notification check: did worker push a result before/during SLEEP_FLAG store?
+      // 3. Double-check if worker pushed more results while draining
       if (ctx.resultRing.getPendingCount() > 0) {
-        Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         continue;
       }
 
-      const currentWrite = Atomics.load(ctx.resultRing.ctrl, WRITE_IDX);
-
-      const waitRes = Atomics.waitAsync(ctx.resultRing.ctrl, WRITE_IDX, currentWrite);
+      // 4. Arm non-blocking asynchronous waiter. If worker pushed a result after step 1,
+      // waitAsync synchronously returns 'not-equal' and never deadlocks!
+      const waitRes = Atomics.waitAsync(ctx.resultRing.ctrl, WRITE_IDX, expectedWrite);
       if (waitRes.async) {
         waitRes.value.then(() => {
-          Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
           this.armWaitAsync(ctx);
         });
         return;
       } else {
-        Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         if (waitRes.value === 'not-equal') {
           continue;
         }

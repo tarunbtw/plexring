@@ -104,11 +104,13 @@ export class SpscRing {
     this.localWriteIdx = nextWrite;
     Atomics.store(this.ctrl, WRITE_IDX, nextWrite);
 
-    // 3. Conditional wakeup: Only trigger kernel futex syscall if consumer is asleep
+    // 3. Reset sleep flag if consumer was marked sleeping
     if (Atomics.load(this.ctrl, SLEEP_FLAG) === 1) {
       Atomics.store(this.ctrl, SLEEP_FLAG, 0);
-      Atomics.notify(this.ctrl, WRITE_IDX, 1);
     }
+
+    // 4. Wake up consumer if waiting (wakes Atomics.waitAsync microtask or Atomics.wait futex)
+    Atomics.notify(this.ctrl, WRITE_IDX, 1);
 
     return true;
   }

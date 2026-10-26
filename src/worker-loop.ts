@@ -158,6 +158,13 @@ export function startWorkerLoop(handlers: Record<number, RawJobHandler>): void {
       }
 
       // Stage 3: Double-checked futex sleep
+      // 1. Snapshot expected write index BEFORE checking pending count
+      const expectedWrite = Atomics.load(submitRing.ctrl, WRITE_IDX);
+
+      if (submitRing.getPendingCount() > 0) {
+        continue;
+      }
+
       Atomics.store(submitRing.ctrl, SLEEP_FLAG, 1);
 
       // Double-check: Did producer enqueue any jobs before/during SLEEP_FLAG store?
@@ -166,10 +173,9 @@ export function startWorkerLoop(handlers: Record<number, RawJobHandler>): void {
         continue;
       }
 
-      const currentWrite = Atomics.load(submitRing.ctrl, WRITE_IDX);
       // Park thread in kernel until Main Thread calls Atomics.notify()
-      // Periodic 50ms timeout ensures event loop runs for fallback jobs & shutdown signals
-      const waitRes = Atomics.wait(submitRing.ctrl, WRITE_IDX, currentWrite, FUTEX_TIMEOUT_MS);
+      // If producer pushed after step 1, wait returns 'not-equal' immediately!
+      const waitRes = Atomics.wait(submitRing.ctrl, WRITE_IDX, expectedWrite, FUTEX_TIMEOUT_MS);
       Atomics.store(submitRing.ctrl, SLEEP_FLAG, 0);
 
       // Yield once on timeout so parentPort I/O callbacks can execute
