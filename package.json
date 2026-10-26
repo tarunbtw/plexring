@@ -20,7 +20,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx/esm --test 'test/**/*.test.ts'",
-    "bench": "node --import tsx/esm bench/vs-piscina.ts"
+    "bench": "node --import tsx/esm bench/vs-piscina.ts",
+    "bench:http": "node --import tsx/esm bench/http-benchmark.ts",
+    "server": "node --import tsx/esm bench/http-server.ts"
   },
   "engines": {
     "node": ">=20.0.0"

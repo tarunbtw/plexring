@@ -143,6 +143,32 @@ Methods:
 
 ---
 
+## Real-World HTTP Load Testing & k6 Simulation
+
+PlexRing includes a production-grade HTTP Auth Microservice benchmark simulating real-world API gateway token verification.
+
+### Option A: Automated All-in-One Benchmark
+Runs an automated keep-alive HTTP benchmark with 50 concurrent virtual users comparing PlexRing vs Piscina:
+
+```bash
+npm run bench:http
+```
+
+### Option B: Running the Standalone Server & k6
+
+1. Start the HTTP server on port 3000:
+```bash
+npm run server
+```
+
+2. Run the included k6 load test suite:
+```bash
+k6 run bench/k6-test.js
+```
+
+---
+
 ## License
 
 MIT © Tarun
+
