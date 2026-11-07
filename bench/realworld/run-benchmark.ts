@@ -35,6 +35,7 @@ async function main() {
 
   function readJson(req: http.IncomingMessage): Promise<any> {
     return new Promise((resolve, reject) => {
+      req.setEncoding('utf8');
       let raw = '';
       req.on('data', (c) => (raw += c));
       req.on('end', () => {

@@ -41,6 +41,10 @@ class MockDatabase {
   }
 
   public saveSession(userId: number, sessionId: string, ttlSeconds = 3600): SessionRecord {
+    if (this.sessions.size > 2000) {
+      const first = this.sessions.keys().next().value;
+      if (first !== undefined) this.sessions.delete(first);
+    }
     const session: SessionRecord = {
       sessionId,
       userId,

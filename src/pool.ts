@@ -37,18 +37,13 @@ interface WorkerContext {
 const TABLE_SIZE = 65536;
 const TABLE_MASK = TABLE_SIZE - 1;
 
-type PendingCallback = (err: Error | null, val?: Uint8Array) => void;
-
-/**
- * High-performance Worker Pool utilizing dedicated SPSC rings per worker,
- * Atomics.waitAsync non-blocking batch draining, and O(1) least-loaded routing.
- */
 export class PlexRing {
   private readonly workers: WorkerContext[] = [];
   private readonly workerCount: number;
 
-  // Pre-allocated flat array for O(1) Promise tracking without Map() GC churn
-  private readonly pendingCallbacks: (PendingCallback | undefined)[] = new Array(TABLE_SIZE);
+  // Pre-allocated flat arrays for O(1) Promise tracking with zero closure allocations
+  private readonly pendingResolvers: (((val: Uint8Array) => void) | undefined)[] = new Array(TABLE_SIZE);
+  private readonly pendingRejecters: (((err: Error) => void) | undefined)[] = new Array(TABLE_SIZE);
 
   private nextRequestId = 1;
   private lastActiveWorkerIdx = 0;
@@ -86,15 +81,17 @@ export class PlexRing {
       worker.on('message', (msg: WorkerOutboundMessage) => {
         if (msg && msg.type === MSG_FALLBACK_RES) {
           const slot = msg.requestId & TABLE_MASK;
-          const cb = this.pendingCallbacks[slot];
-          if (!cb) return;
-          this.pendingCallbacks[slot] = undefined;
+          const resolve = this.pendingResolvers[slot];
+          if (!resolve) return;
+          const reject = this.pendingRejecters[slot];
+          this.pendingResolvers[slot] = undefined;
+          this.pendingRejecters[slot] = undefined;
 
           if (msg.status === STATUS_OK) {
-            cb(null, msg.payload);
+            resolve(msg.payload);
           } else {
             const err = decodePayload(msg.payload);
-            cb(err instanceof Error ? err : new Error(String(err)));
+            reject?.(err instanceof Error ? err : new Error(String(err)));
           }
         }
       });
@@ -160,23 +157,25 @@ export class PlexRing {
     while (
       ctx.resultRing.tryPop((status, requestId, payloadView) => {
         const slot = requestId & TABLE_MASK;
-        const cb = this.pendingCallbacks[slot];
-        if (!cb) return;
-        this.pendingCallbacks[slot] = undefined;
+        const resolve = this.pendingResolvers[slot];
+        if (!resolve) return;
+        const reject = this.pendingRejecters[slot];
+        this.pendingResolvers[slot] = undefined;
+        this.pendingRejecters[slot] = undefined;
 
         if (status === STATUS_OK) {
           // Zero-allocation singleton fast-path for boolean and void responses
           const len = payloadView.byteLength;
           if (len === 2 && payloadView[0] === TAG_BOOLEAN) {
-            cb(null, payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
+            resolve(payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
           } else if (len === 1 && payloadView[0] === TAG_VOID) {
-            cb(null, BUF_VOID);
+            resolve(BUF_VOID);
           } else {
-            cb(null, new Uint8Array(payloadView));
+            resolve(new Uint8Array(payloadView));
           }
         } else {
           const decoded = decodePayload(payloadView);
-          cb(decoded instanceof Error ? decoded : new Error(String(decoded)));
+          reject?.(decoded instanceof Error ? decoded : new Error(String(decoded)));
         }
       })
     ) {}
@@ -197,7 +196,8 @@ export class PlexRing {
     const slot = reqId & TABLE_MASK;
 
     const promise = new Promise<Uint8Array>((resolve, reject) => {
-      this.pendingCallbacks[slot] = (err, val) => (err ? reject(err) : resolve(val!));
+      this.pendingResolvers[slot] = resolve;
+      this.pendingRejecters[slot] = reject;
     });
 
     // Warm-affinity spillover scheduler:
@@ -222,9 +222,14 @@ export class PlexRing {
       }
     }
 
-
-    // Opportunistically drain any ready results from the selected worker
-    this.drainResults(bestWorker);
+    // Opportunistically drain any ready results
+    if (this.workerCount <= 4) {
+      for (let i = 0; i < this.workerCount; i++) {
+        this.drainResults(this.workers[i]);
+      }
+    } else {
+      this.drainResults(bestWorker);
+    }
 
     // 1. Fast Path: If fits within 249B, push directly into SPSC submitRing
     if (payload.byteLength <= MAX_PAYLOAD) {
@@ -293,10 +298,11 @@ export class PlexRing {
 
     // Reject any remaining pending promises
     for (let i = 0; i < TABLE_SIZE; i++) {
-      const cb = this.pendingCallbacks[i];
-      if (cb) {
-        this.pendingCallbacks[i] = undefined;
-        cb(new Error('Pool was destroyed while request was in-flight'));
+      const reject = this.pendingRejecters[i];
+      if (reject) {
+        this.pendingResolvers[i] = undefined;
+        this.pendingRejecters[i] = undefined;
+        reject(new Error('Pool was destroyed while request was in-flight'));
       }
     }
   }
