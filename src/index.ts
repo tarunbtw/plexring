@@ -157,11 +157,11 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
         payloadBytes = len !== -1 ? scratchBuf.subarray(0, len) : packOversized(input);
       }
 
-      return pool.run(jobType, payloadBytes).then(decodePayload) as Promise<Awaited<ReturnType<T[K]>>>;
+      return pool.run<Awaited<ReturnType<T[K]>>>(jobType, payloadBytes, false);
     },
 
     runRaw(jobType: number, payload: Uint8Array): Promise<Uint8Array> {
-      return pool.run(jobType, payload);
+      return pool.run<Uint8Array>(jobType, payload, true);
     },
 
     stats(): PoolStats {

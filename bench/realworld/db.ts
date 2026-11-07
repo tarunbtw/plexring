@@ -21,6 +21,7 @@ export interface SessionRecord {
 class MockDatabase {
   private readonly users = new Map<number, UserRecord>();
   private readonly sessions = new Map<string, SessionRecord>();
+  private readonly sessionKeys: string[] = [];
 
   constructor(userCount = 10000) {
     const roles: UserRecord['role'][] = ['admin', 'developer', 'operator', 'user'];
@@ -41,9 +42,11 @@ class MockDatabase {
   }
 
   public saveSession(userId: number, sessionId: string, ttlSeconds = 3600): SessionRecord {
-    if (this.sessions.size > 2000) {
-      const first = this.sessions.keys().next().value;
-      if (first !== undefined) this.sessions.delete(first);
+    if (this.sessions.size >= 2000) {
+      const toRemove = this.sessionKeys.splice(0, 200);
+      for (let i = 0; i < toRemove.length; i++) {
+        this.sessions.delete(toRemove[i]);
+      }
     }
     const session: SessionRecord = {
       sessionId,
@@ -51,6 +54,7 @@ class MockDatabase {
       expiresAt: Date.now() + ttlSeconds * 1000,
     };
     this.sessions.set(sessionId, session);
+    this.sessionKeys.push(sessionId);
     return session;
   }
 
@@ -72,6 +76,7 @@ class MockDatabase {
 
   public clearSessions(): void {
     this.sessions.clear();
+    this.sessionKeys.length = 0;
   }
 }
 

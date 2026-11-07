@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 /**
  * Memory layout, cache-line separation, and binary slot constants for plexring.
  *
@@ -48,7 +50,15 @@ export const MSG_FALLBACK_JOB = 'fallback_job';
 export const MSG_FALLBACK_RES = 'fallback_res';
 
 // Worker Loop Synchronization Thresholds
-export const SPIN_LIMIT = 2000;      // User-space spin iterations before kernel futex park
+// Low-core environments (<= 2 cores) yield faster to prevent producer starvation
+const coreCount =
+  typeof os !== 'undefined' && os.availableParallelism
+    ? os.availableParallelism()
+    : typeof os !== 'undefined' && os.cpus
+      ? os.cpus().length
+      : 4;
+
+export const SPIN_LIMIT = coreCount <= 2 ? 100 : 2000;
 export const FUTEX_TIMEOUT_MS = 50;  // Periodic timeout to service libuv event loop and fallback I/O
 
 

@@ -94,6 +94,10 @@ async function main() {
     res.writeHead(404).end();
   });
 
+  server.on('connection', (socket) => {
+    socket.setNoDelay(true);
+  });
+
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const port = (server.address() as any).port;
 
@@ -113,7 +117,11 @@ async function main() {
     const latencies: number[] = [];
     let completed = 0;
     let running = true;
-    const agent = new http.Agent({ keepAlive: true, maxSockets: CONCURRENCY });
+    const agent = new http.Agent({
+      keepAlive: true,
+      maxSockets: CONCURRENCY,
+      scheduling: 'lifo',
+    });
 
     const worker = async (vuId: number) => {
       let iter = 0;
@@ -143,6 +151,7 @@ async function main() {
               res.on('end', resolve);
             }
           );
+          req.setNoDelay(true);
           req.on('error', reject);
           req.write(postData);
           req.end();

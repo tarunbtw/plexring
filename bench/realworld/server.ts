@@ -200,6 +200,10 @@ export const server = http.createServer(async (req, res) => {
   res.end('{"error":"Not Found"}');
 });
 
+server.on('connection', (socket) => {
+  socket.setNoDelay(true);
+});
+
 // Auto-start if invoked directly from CLI
 const isDirectRun =
   process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js');

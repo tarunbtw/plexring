@@ -32,6 +32,7 @@ interface WorkerContext {
   worker: Worker;
   submitRing: SpscRing;
   resultRing: SpscRing;
+  onWaitAsyncReady: () => void;
 }
 
 const TABLE_SIZE = 65536;
@@ -42,8 +43,9 @@ export class PlexRing {
   private readonly workerCount: number;
 
   // Pre-allocated flat arrays for O(1) Promise tracking with zero closure allocations
-  private readonly pendingResolvers: (((val: Uint8Array) => void) | undefined)[] = new Array(TABLE_SIZE);
+  private readonly pendingResolvers: (((val: any) => void) | undefined)[] = new Array(TABLE_SIZE);
   private readonly pendingRejecters: (((err: Error) => void) | undefined)[] = new Array(TABLE_SIZE);
+  private readonly pendingRawMode: Uint8Array = new Uint8Array(TABLE_SIZE);
 
   private nextRequestId = 1;
   private lastActiveWorkerIdx = 0;
@@ -75,6 +77,10 @@ export class PlexRing {
         worker,
         submitRing,
         resultRing,
+        onWaitAsyncReady: () => {
+          Atomics.store(resultRing.ctrl, SLEEP_FLAG, 0);
+          this.armWaitAsync(ctx);
+        },
       };
 
       // Listen for fallback responses sent via postMessage
@@ -88,7 +94,7 @@ export class PlexRing {
           this.pendingRejecters[slot] = undefined;
 
           if (msg.status === STATUS_OK) {
-            resolve(msg.payload);
+            resolve(this.pendingRawMode[slot] === 1 ? msg.payload : decodePayload(msg.payload));
           } else {
             const err = decodePayload(msg.payload);
             reject?.(err instanceof Error ? err : new Error(String(err)));
@@ -134,51 +140,47 @@ export class PlexRing {
       // waitAsync synchronously returns 'not-equal' and never deadlocks!
       const waitRes = Atomics.waitAsync(ctx.resultRing.ctrl, WRITE_IDX, expectedWrite);
       if (waitRes.async) {
-        waitRes.value.then(() => {
-          Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
-          this.armWaitAsync(ctx);
-        });
+        waitRes.value.then(ctx.onWaitAsyncReady);
         return;
       } else {
         Atomics.store(ctx.resultRing.ctrl, SLEEP_FLAG, 0);
         if (waitRes.value === 'not-equal') {
           continue;
         }
-        setImmediate(() => this.armWaitAsync(ctx));
+        setImmediate(ctx.onWaitAsyncReady);
         return;
       }
     }
   }
 
   /**
+   * Reusable consumer callback for draining results with zero per-pop closure allocations.
+   */
+  private readonly onSlotResult = (status: number, requestId: number, payloadView: Uint8Array): void => {
+    const slot = requestId & TABLE_MASK;
+    const resolve = this.pendingResolvers[slot];
+    if (!resolve) return;
+    const reject = this.pendingRejecters[slot];
+    this.pendingResolvers[slot] = undefined;
+    this.pendingRejecters[slot] = undefined;
+
+    if (status === STATUS_OK) {
+      if (this.pendingRawMode[slot] === 1) {
+        resolve(new Uint8Array(payloadView));
+      } else {
+        resolve(decodePayload(payloadView));
+      }
+    } else {
+      const decoded = decodePayload(payloadView);
+      reject?.(decoded instanceof Error ? decoded : new Error(String(decoded)));
+    }
+  };
+
+  /**
    * Drains all available completed jobs from the worker's resultRing in a single batch.
    */
   private drainResults(ctx: WorkerContext): void {
-    while (
-      ctx.resultRing.tryPop((status, requestId, payloadView) => {
-        const slot = requestId & TABLE_MASK;
-        const resolve = this.pendingResolvers[slot];
-        if (!resolve) return;
-        const reject = this.pendingRejecters[slot];
-        this.pendingResolvers[slot] = undefined;
-        this.pendingRejecters[slot] = undefined;
-
-        if (status === STATUS_OK) {
-          // Zero-allocation singleton fast-path for boolean and void responses
-          const len = payloadView.byteLength;
-          if (len === 2 && payloadView[0] === TAG_BOOLEAN) {
-            resolve(payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
-          } else if (len === 1 && payloadView[0] === TAG_VOID) {
-            resolve(BUF_VOID);
-          } else {
-            resolve(new Uint8Array(payloadView));
-          }
-        } else {
-          const decoded = decodePayload(payloadView);
-          reject?.(decoded instanceof Error ? decoded : new Error(String(decoded)));
-        }
-      })
-    ) {}
+    while (ctx.resultRing.tryPop(this.onSlotResult)) {}
   }
 
   /**
@@ -187,17 +189,19 @@ export class PlexRing {
    * Fast Path: <= 249 bytes pushed directly into the least-loaded worker's SPSC submitRing (~300ns).
    * Fallback Path: > 249 bytes or ring-full backpressure dispatched seamlessly via worker.postMessage.
    */
-  public run(jobType: number, payload: Uint8Array): Promise<Uint8Array> {
+  public run<T = any>(jobType: number, payload: Uint8Array, raw: boolean = true): Promise<T> {
     if (this.isDestroyed) {
       return Promise.reject(new Error('PlexRing pool has been destroyed'));
     }
 
     const reqId = this.nextRequestId++;
+    if (this.nextRequestId > 0x7fffffff) this.nextRequestId = 1;
     const slot = reqId & TABLE_MASK;
 
-    const promise = new Promise<Uint8Array>((resolve, reject) => {
+    const promise = new Promise<T>((resolve, reject) => {
       this.pendingResolvers[slot] = resolve;
       this.pendingRejecters[slot] = reject;
+      this.pendingRawMode[slot] = raw ? 1 : 0;
     });
 
     // Warm-affinity spillover scheduler:
