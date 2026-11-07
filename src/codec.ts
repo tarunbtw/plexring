@@ -18,9 +18,9 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 // Reusable scratch buffer for packing structured primitives without heap allocations
-const scratchBuf = new Uint8Array(MAX_PAYLOAD);
+export const scratchBuf = new Uint8Array(MAX_PAYLOAD);
 const scratchView = new DataView(scratchBuf.buffer, scratchBuf.byteOffset, scratchBuf.byteLength);
-const scratchPayloadSlice = scratchBuf.subarray(1, MAX_PAYLOAD);
+export const scratchPayloadSlice = scratchBuf.subarray(1, MAX_PAYLOAD);
 
 /**
  * Encodes an arbitrary JS value into a target buffer slice.

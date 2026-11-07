@@ -4,6 +4,7 @@ import { startWorkerLoop } from './worker-loop.js';
 import {
   encodePayload,
   decodePayload,
+  scratchBuf,
   TAG_RAW_BYTES,
   TAG_JSON,
   BUF_TRUE,
@@ -136,8 +137,6 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
   keys.forEach((key, idx) => {
     keyLookup[key] = idx;
   });
-
-  const scratchBuf = new Uint8Array(MAX_PAYLOAD);
 
   return {
     run<K extends keyof T>(task: K, input: Parameters<T[K]>[0]): Promise<Awaited<ReturnType<T[K]>>> {

@@ -65,6 +65,10 @@ class MockDatabase {
   public countSessions(): number {
     return this.sessions.size;
   }
+
+  public clearSessions(): void {
+    this.sessions.clear();
+  }
 }
 
 export const db = new MockDatabase();

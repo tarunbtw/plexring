@@ -164,6 +164,12 @@ async function main() {
     const p95Ms = latencies[Math.floor(latencies.length * 0.95)].toFixed(2);
     const p99Ms = latencies[Math.floor(latencies.length * 0.99)].toFixed(2);
     const rps = Math.round((completed / DURATION_MS) * 1000);
+
+    // Clean session store and trigger GC to measure true baseline heap of the engine
+    db.clearSessions();
+    if (typeof global.gc === 'function') {
+      global.gc();
+    }
     const mem = process.memoryUsage();
 
     return {
@@ -182,13 +188,19 @@ async function main() {
   process.stdout.write('Warming up server and pools... ');
   await runLoad('Warmup Plex', '/api/plex/verify');
   await runLoad('Warmup Piscina', '/api/piscina/verify');
+  db.clearSessions();
+  if (typeof global.gc === 'function') global.gc();
   console.log('done!\n');
 
   console.log(`[1/2] Benchmarking Piscina with ${CONCURRENCY} VUs for 3s...`);
+  db.clearSessions();
+  if (typeof global.gc === 'function') global.gc();
   const piscinaRes = await runLoad('Piscina Engine', '/api/piscina/verify');
   console.log(`      Completed ${piscinaRes.total.toLocaleString()} requests -> ${piscinaRes.rps.toLocaleString()} req/s (p99: ${piscinaRes.p99Ms}ms)\n`);
 
   console.log(`[2/2] Benchmarking PlexRing with ${CONCURRENCY} VUs for 3s...`);
+  db.clearSessions();
+  if (typeof global.gc === 'function') global.gc();
   const plexRes = await runLoad('PlexRing Engine', '/api/plex/verify');
   console.log(`      Completed ${plexRes.total.toLocaleString()} requests -> ${plexRes.rps.toLocaleString()} req/s (p99: ${plexRes.p99Ms}ms)\n`);
 
