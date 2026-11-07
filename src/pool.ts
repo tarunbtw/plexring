@@ -32,11 +32,12 @@ interface WorkerContext {
   worker: Worker;
   submitRing: SpscRing;
   resultRing: SpscRing;
-  lastReadResultIdx: number;
 }
 
 const TABLE_SIZE = 65536;
 const TABLE_MASK = TABLE_SIZE - 1;
+
+type PendingCallback = (err: Error | null, val?: Uint8Array) => void;
 
 /**
  * High-performance Worker Pool utilizing dedicated SPSC rings per worker,
@@ -46,9 +47,8 @@ export class PlexRing {
   private readonly workers: WorkerContext[] = [];
   private readonly workerCount: number;
 
-  // Pre-allocated flat arrays for O(1) Promise tracking without Map() GC churn
-  private readonly pendingResolvers: (((val: Uint8Array) => void) | undefined)[] = new Array(TABLE_SIZE);
-  private readonly pendingRejecters: (((err: Error) => void) | undefined)[] = new Array(TABLE_SIZE);
+  // Pre-allocated flat array for O(1) Promise tracking without Map() GC churn
+  private readonly pendingCallbacks: (PendingCallback | undefined)[] = new Array(TABLE_SIZE);
 
   private nextRequestId = 1;
   private lastActiveWorkerIdx = 0;
@@ -80,23 +80,21 @@ export class PlexRing {
         worker,
         submitRing,
         resultRing,
-        lastReadResultIdx: 0,
       };
 
       // Listen for fallback responses sent via postMessage
       worker.on('message', (msg: WorkerOutboundMessage) => {
         if (msg && msg.type === MSG_FALLBACK_RES) {
           const slot = msg.requestId & TABLE_MASK;
-          const resolve = this.pendingResolvers[slot];
-          const reject = this.pendingRejecters[slot];
-          this.pendingResolvers[slot] = undefined;
-          this.pendingRejecters[slot] = undefined;
+          const cb = this.pendingCallbacks[slot];
+          if (!cb) return;
+          this.pendingCallbacks[slot] = undefined;
 
           if (msg.status === STATUS_OK) {
-            resolve?.(msg.payload);
+            cb(null, msg.payload);
           } else {
             const err = decodePayload(msg.payload);
-            reject?.(err instanceof Error ? err : new Error(String(err)));
+            cb(err instanceof Error ? err : new Error(String(err)));
           }
         }
       });
@@ -162,29 +160,23 @@ export class PlexRing {
     while (
       ctx.resultRing.tryPop((status, requestId, payloadView) => {
         const slot = requestId & TABLE_MASK;
-        const resolve = this.pendingResolvers[slot];
-        const reject = this.pendingRejecters[slot];
-        this.pendingResolvers[slot] = undefined;
-        this.pendingRejecters[slot] = undefined;
-
-        if (!resolve && !reject) {
-          return;
-        }
+        const cb = this.pendingCallbacks[slot];
+        if (!cb) return;
+        this.pendingCallbacks[slot] = undefined;
 
         if (status === STATUS_OK) {
           // Zero-allocation singleton fast-path for boolean and void responses
           const len = payloadView.byteLength;
           if (len === 2 && payloadView[0] === TAG_BOOLEAN) {
-            resolve?.(payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
+            cb(null, payloadView[1] === 1 ? BUF_TRUE : BUF_FALSE);
           } else if (len === 1 && payloadView[0] === TAG_VOID) {
-            resolve?.(BUF_VOID);
+            cb(null, BUF_VOID);
           } else {
-            resolve?.(new Uint8Array(payloadView));
+            cb(null, new Uint8Array(payloadView));
           }
         } else {
           const decoded = decodePayload(payloadView);
-          const err = decoded instanceof Error ? decoded : new Error(String(decoded));
-          reject?.(err);
+          cb(decoded instanceof Error ? decoded : new Error(String(decoded)));
         }
       })
     ) {}
@@ -205,8 +197,7 @@ export class PlexRing {
     const slot = reqId & TABLE_MASK;
 
     const promise = new Promise<Uint8Array>((resolve, reject) => {
-      this.pendingResolvers[slot] = resolve;
-      this.pendingRejecters[slot] = reject;
+      this.pendingCallbacks[slot] = (err, val) => (err ? reject(err) : resolve(val!));
     });
 
     // Warm-affinity spillover scheduler:
@@ -302,11 +293,10 @@ export class PlexRing {
 
     // Reject any remaining pending promises
     for (let i = 0; i < TABLE_SIZE; i++) {
-      const reject = this.pendingRejecters[i];
-      if (reject) {
-        reject(new Error('Pool was destroyed while request was in-flight'));
-        this.pendingResolvers[i] = undefined;
-        this.pendingRejecters[i] = undefined;
+      const cb = this.pendingCallbacks[i];
+      if (cb) {
+        this.pendingCallbacks[i] = undefined;
+        cb(new Error('Pool was destroyed while request was in-flight'));
       }
     }
   }

@@ -26,8 +26,21 @@ export * from './types.js';
 
 export interface WorkerSpecDef<T extends Record<string, TypedJobHandler<any, any>>> {
   handlers: T;
-  keyMap: Map<string, number>;
   keys: string[];
+}
+
+function packOversized(data: unknown): Uint8Array {
+  if (data instanceof Uint8Array) {
+    const buf = new Uint8Array(data.byteLength + 1);
+    buf[0] = TAG_RAW_BYTES;
+    buf.set(data, 1);
+    return buf;
+  }
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(data));
+  const buf = new Uint8Array(jsonBytes.byteLength + 1);
+  buf[0] = TAG_JSON;
+  buf.set(jsonBytes, 1);
+  return buf;
 }
 
 /**
@@ -38,40 +51,19 @@ export function defineWorker<T extends Record<string, TypedJobHandler<any, any>>
   handlers: T
 ): WorkerSpecDef<T> {
   const keys = Object.keys(handlers).sort();
-  const keyMap = new Map<string, number>();
-
-  keys.forEach((key, idx) => {
-    keyMap.set(key, idx);
-  });
 
   // If running inside worker thread, start the SPSC spin-park execution loop automatically
   if (!isMainThread) {
     const rawHandlers: Record<number, RawJobHandler> = {};
     const workerScratchBuf = new Uint8Array(MAX_PAYLOAD);
 
-    function serializeResult(result: unknown, key: string): Uint8Array {
+    function serializeResult(result: unknown): Uint8Array {
       if (result === true) return BUF_TRUE;
       if (result === false) return BUF_FALSE;
       if (result === undefined || result === null) return BUF_VOID;
 
       const len = encodePayload(result, workerScratchBuf);
-      if (len !== -1) {
-        return workerScratchBuf.subarray(0, len);
-      }
-
-      // Oversized result handling (triggers fallback postMessage return in worker-loop)
-      if (result instanceof Uint8Array) {
-        const bigBuf = new Uint8Array(result.byteLength + 1);
-        bigBuf[0] = TAG_RAW_BYTES;
-        bigBuf.set(result, 1);
-        return bigBuf;
-      }
-
-      const jsonBytes = new TextEncoder().encode(JSON.stringify(result));
-      const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
-      bigBuf[0] = TAG_JSON;
-      bigBuf.set(jsonBytes, 1);
-      return bigBuf;
+      return len !== -1 ? workerScratchBuf.subarray(0, len) : packOversized(result);
     }
 
     for (let i = 0; i < keys.length; i++) {
@@ -83,17 +75,17 @@ export function defineWorker<T extends Record<string, TypedJobHandler<any, any>>
         const result = fn(decodedInput);
 
         if (result instanceof Promise) {
-          return result.then((res) => serializeResult(res, key));
+          return result.then(serializeResult);
         }
 
-        return serializeResult(result, key);
+        return serializeResult(result);
       };
     }
 
     startWorkerLoop(rawHandlers);
   }
 
-  return { handlers, keyMap, keys };
+  return { handlers, keys };
 }
 
 /**
@@ -163,23 +155,7 @@ export function createPlex<T extends Record<string, TypedJobHandler<any, any>>>(
         payloadBytes = BUF_VOID;
       } else {
         const len = encodePayload(input, scratchBuf);
-        if (len !== -1) {
-          payloadBytes = scratchBuf.subarray(0, len);
-        } else {
-          // Oversized input: serialize with tag byte for fallback postMessage path
-          if ((input as unknown) instanceof Uint8Array) {
-            const bigBuf = new Uint8Array((input as unknown as Uint8Array).byteLength + 1);
-            bigBuf[0] = TAG_RAW_BYTES;
-            bigBuf.set(input as unknown as Uint8Array, 1);
-            payloadBytes = bigBuf;
-          } else {
-            const jsonBytes = new TextEncoder().encode(JSON.stringify(input));
-            const bigBuf = new Uint8Array(jsonBytes.byteLength + 1);
-            bigBuf[0] = TAG_JSON;
-            bigBuf.set(jsonBytes, 1);
-            payloadBytes = bigBuf;
-          }
-        }
+        payloadBytes = len !== -1 ? scratchBuf.subarray(0, len) : packOversized(input);
       }
 
       return pool.run(jobType, payloadBytes).then(decodePayload) as Promise<Awaited<ReturnType<T[K]>>>;

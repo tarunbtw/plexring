@@ -12,15 +12,13 @@ import {
   MSG_FALLBACK_RES,
   MAX_PAYLOAD,
 } from './constants.js';
-import { encodeError, encodePayload, decodePayload } from './codec.js';
+import { encodeError } from './codec.js';
 import type { RawJobHandler, WorkerInboundMessage } from './types.js';
 
 export interface WorkerInitData {
   submitSab: SharedArrayBuffer;
   resultSab: SharedArrayBuffer;
 }
-
-const EMPTY_PAYLOAD = new Uint8Array(0);
 
 /**
  * Initializes and starts the adaptive spin-then-park execution loop

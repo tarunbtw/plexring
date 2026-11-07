@@ -2,23 +2,11 @@
  * Type definitions for plexring.
  */
 
-export interface DecodedSlot {
-  /** Job type ID (0..255) on submit ring, or status code (0 = OK, 1 = Error) on result ring */
-  typeOrStatus: number;
-  /** Request identifier matching in-flight resolver */
-  requestId: number;
-  /** Direct subarray view into the pinned slot payload */
-  payload: Uint8Array;
-}
-
 /** Function handler signature running inside the worker thread */
 export type RawJobHandler = (payload: Uint8Array) => Uint8Array | Promise<Uint8Array>;
 
 /** Generic typed handler definition for defineWorker */
 export type TypedJobHandler<TInput = any, TOutput = any> = (input: TInput) => TOutput | Promise<TOutput>;
-
-/** Spec map passed to defineWorker */
-export type WorkerSpecRecord = Record<string, TypedJobHandler<any, any>>;
 
 /** Fallback IPC message from Main Thread to Worker Thread */
 export interface FallbackJobMessage {
