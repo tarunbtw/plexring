@@ -117,11 +117,7 @@ async function main() {
     const latencies: number[] = [];
     let completed = 0;
     let running = true;
-    const agent = new http.Agent({
-      keepAlive: true,
-      maxSockets: CONCURRENCY,
-      scheduling: 'lifo',
-    });
+    const agent = new http.Agent({ keepAlive: true, maxSockets: CONCURRENCY });
 
     const worker = async (vuId: number) => {
       let iter = 0;
@@ -151,7 +147,6 @@ async function main() {
               res.on('end', resolve);
             }
           );
-          req.setNoDelay(true);
           req.on('error', reject);
           req.write(postData);
           req.end();

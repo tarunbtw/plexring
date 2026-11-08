@@ -90,11 +90,13 @@ export class PlexRing {
           const resolve = this.pendingResolvers[slot];
           if (!resolve) return;
           const reject = this.pendingRejecters[slot];
+          const isRaw = this.pendingRawMode[slot] === 1;
           this.pendingResolvers[slot] = undefined;
           this.pendingRejecters[slot] = undefined;
+          this.pendingRawMode[slot] = 0;
 
           if (msg.status === STATUS_OK) {
-            resolve(this.pendingRawMode[slot] === 1 ? msg.payload : decodePayload(msg.payload));
+            resolve(isRaw ? msg.payload : decodePayload(msg.payload));
           } else {
             const err = decodePayload(msg.payload);
             reject?.(err instanceof Error ? err : new Error(String(err)));
@@ -161,14 +163,23 @@ export class PlexRing {
     const resolve = this.pendingResolvers[slot];
     if (!resolve) return;
     const reject = this.pendingRejecters[slot];
+    const isRaw = this.pendingRawMode[slot] === 1;
     this.pendingResolvers[slot] = undefined;
     this.pendingRejecters[slot] = undefined;
+    this.pendingRawMode[slot] = 0;
 
     if (status === STATUS_OK) {
-      if (this.pendingRawMode[slot] === 1) {
+      if (isRaw) {
         resolve(new Uint8Array(payloadView));
       } else {
-        resolve(decodePayload(payloadView));
+        const len = payloadView.byteLength;
+        if (len === 2 && payloadView[0] === TAG_BOOLEAN) {
+          resolve(payloadView[1] === 1);
+        } else if (len === 1 && payloadView[0] === TAG_VOID) {
+          resolve(undefined);
+        } else {
+          resolve(decodePayload(payloadView));
+        }
       }
     } else {
       const decoded = decodePayload(payloadView);
