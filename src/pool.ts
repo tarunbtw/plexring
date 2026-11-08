@@ -96,11 +96,32 @@ export class PlexRing {
           this.pendingRawMode[slot] = 0;
 
           if (msg.status === STATUS_OK) {
-            resolve(isRaw ? msg.payload : decodePayload(msg.payload));
+            try {
+              resolve(isRaw ? msg.payload : decodePayload(msg.payload));
+            } catch (err) {
+              reject?.(err instanceof Error ? err : new Error(String(err)));
+            }
           } else {
-            const err = decodePayload(msg.payload);
-            reject?.(err instanceof Error ? err : new Error(String(err)));
+            try {
+              const err = decodePayload(msg.payload);
+              reject?.(err instanceof Error ? err : new Error(String(err)));
+            } catch (err) {
+              reject?.(err instanceof Error ? err : new Error(String(err)));
+            }
           }
+        }
+      });
+
+      // Prevent uncaught worker error events from crashing main process
+      worker.on('error', () => {
+        if (!this.isDestroyed) {
+          this.drainResults(ctx);
+        }
+      });
+
+      worker.on('exit', (code: number) => {
+        if (!this.isDestroyed && code !== 0) {
+          this.drainResults(ctx);
         }
       });
 
@@ -178,12 +199,20 @@ export class PlexRing {
         } else if (len === 1 && payloadView[0] === TAG_VOID) {
           resolve(undefined);
         } else {
-          resolve(decodePayload(payloadView));
+          try {
+            resolve(decodePayload(payloadView));
+          } catch (err) {
+            reject?.(err instanceof Error ? err : new Error(String(err)));
+          }
         }
       }
     } else {
-      const decoded = decodePayload(payloadView);
-      reject?.(decoded instanceof Error ? decoded : new Error(String(decoded)));
+      try {
+        const decoded = decodePayload(payloadView);
+        reject?.(decoded instanceof Error ? decoded : new Error(String(decoded)));
+      } catch (err) {
+        reject?.(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   };
 
